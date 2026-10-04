@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#06C755" />
+  <title>ระบบขอใช้รถหน่วยงาน</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+</head>
+<body>
+  <div id="toast" class="toast"></div>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">UNIT VEHICLE</div>
+      <h1>ระบบขอใช้รถหน่วยงาน</h1>
+    </div>
+    <button id="profileBtn" class="avatar" aria-label="โปรไฟล์">U</button>
+  </header>
+
+  <main id="app" class="container">
+    <section id="loading" class="card center">
+      <div class="spinner"></div>
+      <p>กำลังเชื่อมต่อ LINE...</p>
+    </section>
+
+    <section id="home" class="hidden">
+      <div class="hero card">
+        <div>
+          <span class="badge success">พร้อมใช้งาน</span>
+          <h2 id="hello">สวัสดี</h2>
+          <p id="roleText" class="muted">กำลังโหลดข้อมูลผู้ใช้</p>
+        </div>
+        <div class="vehicle-icon">🚙</div>
+      </div>
+
+      <div class="grid-2">
+        <button class="menu-card primary" data-view="request">
+          <span class="menu-icon">＋</span><strong>ขอใช้รถ</strong><small>ส่งคำขอใหม่</small>
+        </button>
+        <button class="menu-card" data-view="availability">
+          <span class="menu-icon">🔎</span><strong>เช็กรถว่าง</strong><small>ค้นหาตามช่วงเวลา</small>
+        </button>
+        <button class="menu-card" data-view="myRequests">
+          <span class="menu-icon">📋</span><strong>คำขอของฉัน</strong><small>ติดตามสถานะ</small>
+        </button>
+        <button class="menu-card" data-view="approvals" id="approvalMenu">
+          <span class="menu-icon">✅</span><strong>รออนุมัติ</strong><small>งานที่ต้องดำเนินการ</small>
+        </button>
+      </div>
+
+      <section class="card section-card">
+        <div class="section-head"><h3>ภาพรวมวันนี้</h3><button class="link-btn" data-view="fleet">ดูทั้งหมด</button></div>
+        <div id="todayStats" class="stats"></div>
+      </section>
+    </section>
+
+    <section id="request" class="hidden">
+      <div class="section-head"><button class="back">←</button><h2>ขอใช้รถ</h2><span></span></div>
+      <form id="requestForm" class="card form-card">
+        <label>วันที่และเวลาออก<input type="datetime-local" name="startAt" required></label>
+        <label>วันที่และเวลาคืน<input type="datetime-local" name="endAt" required></label>
+        <button type="button" id="checkAvailBtn" class="btn secondary">ตรวจสอบรถว่าง</button>
+        <div id="vehicleChoices" class="vehicle-list"></div>
+        <label>จุดหมาย<input type="text" name="destination" placeholder="เช่น จ.ขอนแก่น" required></label>
+        <label>วัตถุประสงค์<textarea name="purpose" rows="3" required></textarea></label>
+        <div class="grid-2-fields">
+          <label>จำนวนผู้เดินทาง<input type="number" name="passengers" min="1" value="1" required></label>
+          <label>ความเร่งด่วน<select name="priority"><option value="NORMAL">ปกติ</option><option value="URGENT">ด่วน</option><option value="EMERGENCY">ฉุกเฉิน</option></select></label>
+        </div>
+        <label>เบอร์ติดต่อ<input type="tel" name="contactPhone"></label>
+        <label>หมายเหตุ<textarea name="note" rows="2"></textarea></label>
+        <button type="submit" class="btn primary">ส่งคำขออนุมัติ</button>
+      </form>
+    </section>
+
+    <section id="availability" class="hidden">
+      <div class="section-head"><button class="back">←</button><h2>ตรวจสอบรถว่าง</h2><span></span></div>
+      <div class="card form-card">
+        <label>เริ่มต้น<input id="availStart" type="datetime-local"></label>
+        <label>สิ้นสุด<input id="availEnd" type="datetime-local"></label>
+        <button id="availSearch" class="btn primary">ค้นหา</button>
+      </div>
+      <div id="availabilityResults" class="stack"></div>
+    </section>
+
+    <section id="myRequests" class="hidden">
+      <div class="section-head"><button class="back">←</button><h2>คำขอของฉัน</h2><span></span></div>
+      <div id="requestList" class="stack"></div>
+    </section>
+
+    <section id="requestDetail" class="hidden">
+      <div class="section-head"><button class="back" data-back="myRequests">←</button><h2>รายละเอียดคำขอ</h2><span></span></div>
+      <div id="detailContent"></div>
+    </section>
+
+    <section id="approvals" class="hidden">
+      <div class="section-head"><button class="back">←</button><h2>รายการรออนุมัติ</h2><span></span></div>
+      <div id="approvalList" class="stack"></div>
+    </section>
+
+    <section id="inspection" class="hidden">
+      <div class="section-head"><button class="back" data-back="myRequests">←</button><h2 id="inspectionTitle">ตรวจสภาพรถ</h2><span></span></div>
+      <form id="inspectionForm" class="card form-card">
+        <input type="hidden" name="requestId"><input type="hidden" name="inspectionType">
+        <label>เลขไมล์<input type="number" name="odometer" min="0" required></label>
+        <label>ระดับน้ำมัน<select name="fuelLevel"><option>เต็มถัง</option><option>3/4</option><option>1/2</option><option>1/4</option><option>ต่ำกว่า 1/4</option></select></label>
+        <label>ภาพเลขไมล์<input type="file" name="odometerPhoto" accept="image/*" capture="environment" required></label>
+        <label>ภาพรถ<input type="file" name="vehiclePhoto" accept="image/*" capture="environment" required></label>
+        <label class="checkbox"><input type="checkbox" name="hasIncident"> พบเหตุการณ์/ความผิดปกติ</label>
+        <label>รายละเอียดเพิ่มเติม<textarea name="note" rows="3"></textarea></label>
+        <label>ภาพเหตุการณ์ (ถ้ามี)<input type="file" name="incidentPhoto" accept="image/*" capture="environment"></label>
+        <button class="btn primary" type="submit">บันทึกข้อมูล</button>
+      </form>
+    </section>
+
+    <section id="fleet" class="hidden">
+      <div class="section-head"><button class="back">←</button><h2>สถานะรถ</h2><span></span></div>
+      <div id="fleetList" class="stack"></div>
+    </section>
+  </main>
+
+  <nav class="bottom-nav hidden" id="bottomNav">
+    <button data-view="home" class="active">⌂<span>หน้าหลัก</span></button>
+    <button data-view="request">＋<span>ขอรถ</span></button>
+    <button data-view="myRequests">▤<span>สถานะ</span></button>
+    <button data-view="availability">⌕<span>รถว่าง</span></button>
+  </nav>
+
+  <script src="./config.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
