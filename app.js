@@ -42,7 +42,33 @@ async function searchAvailability(startAt,endAt,target='#availabilityResults',se
 async function loadMyRequests(){
   try{const d=await api('requests.my');$('#requestList').innerHTML=d.requests.map(r=>`<button class="card item-card" style="text-align:left;width:100%" data-id="${r.requestId}"><div class="item-top"><div><h3>${r.requestId}</h3><div class="meta">${r.destination}<br>${fmt(r.startAt)} – ${fmt(r.endAt)}</div></div><span class="badge ${badgeClass(r.status)}">${statusText(r.status)}</span></div></button>`).join('')||'<div class="card item-card">ยังไม่มีคำขอ</div>';$$('#requestList [data-id]').forEach(x=>x.onclick=()=>loadDetail(x.dataset.id));}catch(e){toast(e.message)}}
 async function loadDetail(id){
-  try{const d=await api('requests.detail',{requestId:id}),r=d.request; const steps=['WAIT_L1','WAIT_L2','ALLOCATED','PRECHECK_PENDING','READY','IN_USE','RETURN_PENDING','COMPLETED']; const current=Math.max(0,steps.indexOf(r.status));let actions='';if(['ALLOCATED','PRECHECK_PENDING'].includes(r.status))actions=`<button class="btn primary" onclick="openInspection('${id}','BEFORE')">ตรวจสภาพก่อนใช้</button>`;if(['READY','IN_USE','RETURN_PENDING'].includes(r.status))actions+=`<button class="btn secondary" onclick="openInspection('${id}','AFTER')">บันทึกคืนรถ</button>`;$('#detailContent').innerHTML=`<div class="card item-card"><div class="item-top"><div><h3>${r.requestId}</h3><div class="meta">${r.destination}</div></div><span class="badge ${badgeClass(r.status)}">${statusText(r.status)}</span></div><div class="divider"></div><div class="kv"><span>ช่วงเวลา</span><b>${fmt(r.startAt)}<br>${fmt(r.endAt)}</b></div><div class="kv"><span>วัตถุประสงค์</span><b>${r.purpose}</b></div><div class="kv"><span>รถ</span><b>${r.assignedVehicleName||r.requestedVehicleName||'รอจัดรถ'}</b></div><div class="timeline">${steps.map((s,i)=>`<div class="timeline-row"><span class="dot ${i<current?'done':i===current?'current':''}"></span><div>${statusText(s)}</div></div>`).join('')}</div>${actions}</div>`;show('requestDetail');}catch(e){toast(e.message)}}
+  try{
+    const d=await api('requests.detail',{requestId:id}),r=d.request;
+    const steps=['WAIT_L1','WAIT_L2','PRECHECK_PENDING','READY','IN_USE','COMPLETED'];
+    const current=Math.max(0,steps.indexOf(r.status));
+    let actions='';
+    if(['ALLOCATED','PRECHECK_PENDING'].includes(r.status)){
+      actions=`<button class="btn primary" onclick="openInspection('${id}','BEFORE')">ตรวจสภาพก่อนใช้งาน</button>`;
+    }
+    if(r.status==='READY'){
+      actions=`<button class="btn primary" onclick="startTrip('${id}')">🚙 เริ่มใช้งานรถ</button>`;
+    }
+    if(r.status==='IN_USE'){
+      actions=`<button class="btn secondary" onclick="openInspection('${id}','AFTER')">คืนรถ / บันทึกหลังใช้งาน</button>`;
+    }
+    $('#detailContent').innerHTML=`<div class="card item-card"><div class="item-top"><div><h3>${r.requestId}</h3><div class="meta">${r.destination}</div></div><span class="badge ${badgeClass(r.status)}">${statusText(r.status)}</span></div><div class="divider"></div><div class="kv"><span>ช่วงเวลา</span><b>${fmt(r.startAt)}<br>${fmt(r.endAt)}</b></div><div class="kv"><span>วัตถุประสงค์</span><b>${r.purpose}</b></div><div class="kv"><span>รถ</span><b>${r.assignedVehicleName||r.requestedVehicleName||'รอจัดรถ'}</b></div><div class="timeline">${steps.map((s,i)=>`<div class="timeline-row"><span class="dot ${i<current?'done':i===current?'current':''}"></span><div>${statusText(s)}</div></div>`).join('')}</div>${actions}</div>`;
+    show('requestDetail');
+  }catch(e){toast(e.message)}
+}
+window.startTrip=async(id)=>{
+  if(!confirm('ยืนยันเริ่มใช้งานรถหรือไม่?')) return;
+  try{
+    await api('trip.start',{requestId:id});
+    toast('เริ่มใช้งานรถแล้ว');
+    await loadDetail(id);
+  }catch(e){toast(e.message)}
+};
+
 window.openInspection=(id,type)=>{const f=$('#inspectionForm');f.requestId.value=id;f.inspectionType.value=type;$('#inspectionTitle').textContent=type==='BEFORE'?'ตรวจสภาพก่อนใช้งาน':'บันทึกคืนรถ';show('inspection')}
 
 async function loadApprovals(){
@@ -57,5 +83,27 @@ $('#availSearch').onclick=()=>searchAvailability($('#availStart').value,$('#avai
 $('#requestForm').onsubmit=async e=>{e.preventDefault();try{const f=Object.fromEntries(new FormData(e.target));f.requestedVehicleId=session.selectedVehicleId;const d=await api('requests.create',f);toast(`ส่งคำขอ ${d.requestId} แล้ว`);e.target.reset();session.selectedVehicleId='';show('myRequests')}catch(err){toast(err.message)}};
 
 async function fileToDataUrl(file){return await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file)})}
-$('#inspectionForm').onsubmit=async e=>{e.preventDefault();try{const fd=new FormData(e.target);const p={requestId:fd.get('requestId'),inspectionType:fd.get('inspectionType'),odometer:Number(fd.get('odometer')),fuelLevel:fd.get('fuelLevel'),hasIncident:!!fd.get('hasIncident'),note:fd.get('note')||'',files:{}};for(const k of ['odometerPhoto','vehiclePhoto','incidentPhoto']){const file=fd.get(k);if(file&&file.size)p.files[k]={name:file.name,type:file.type,dataUrl:await fileToDataUrl(file)}}await api('trip.inspection',p);toast('บันทึกเรียบร้อย');e.target.reset();show('myRequests')}catch(err){toast(err.message)}};
+$('#inspectionForm').onsubmit=async e=>{
+  e.preventDefault();
+  const form=e.target;
+  const btn=form.querySelector('button[type="submit"]');
+  const oldText=btn?btn.textContent:'';
+  try{
+    if(btn){btn.disabled=true;btn.textContent='กำลังบันทึก...';}
+    const fd=new FormData(form);
+    const p={requestId:fd.get('requestId'),inspectionType:fd.get('inspectionType'),odometer:Number(fd.get('odometer')),fuelLevel:fd.get('fuelLevel'),hasIncident:!!fd.get('hasIncident'),note:fd.get('note')||'',files:{}};
+    for(const k of ['odometerPhoto','vehiclePhoto','incidentPhoto']){
+      const file=fd.get(k);
+      if(file&&file.size)p.files[k]={name:file.name,type:file.type,dataUrl:await fileToDataUrl(file)};
+    }
+    const d=await api('trip.inspection',p);
+    alert(d.status==='READY'?'✅ บันทึกตรวจสภาพก่อนใช้งานเรียบร้อย รถพร้อมใช้งาน':'✅ บันทึกการคืนรถเรียบร้อย');
+    form.reset();
+    show('myRequests');
+  }catch(err){
+    alert('บันทึกไม่สำเร็จ: '+err.message);
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=oldText;}
+  }
+};
 init();
