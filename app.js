@@ -1,109 +1,46 @@
-const C = window.APP_CONFIG;
-let session = { idToken: null, user: null, selectedVehicleId: '' };
-const $ = s => document.querySelector(s);
-const $$ = s => [...document.querySelectorAll(s)];
-const views = ['home','request','availability','myRequests','requestDetail','approvals','inspection','fleet'];
-
-function toast(msg){const el=$('#toast');el.textContent=msg;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2600)}
-function show(view){views.forEach(v=>$('#'+v).classList.toggle('hidden',v!==view));$('#loading').classList.add('hidden');$('#bottomNav').classList.remove('hidden');$$('.bottom-nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));if(view==='myRequests')loadMyRequests();if(view==='approvals')loadApprovals();if(view==='fleet')loadFleet();}
+const C=window.APP_CONFIG;
+let session={idToken:null,user:null,selectedVehicleId:'',reportPeriod:'MONTH'};
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const views=['home','request','availability','myRequests','requestDetail','approvals','approvalHistory','departmentHistory','inspection','fleet','reassign','reports','incidents','admin'];
+function toast(msg,ms=2800){const el=$('#toast');el.textContent=msg;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),ms)}
+function busy(on,text='กำลังดำเนินการ...'){$('#busyText').textContent=text;$('#busy').classList.toggle('hidden',!on)}
+function show(view){views.forEach(v=>$('#'+v)?.classList.toggle('hidden',v!==view));$('#loading').classList.add('hidden');$('#bottomNav').classList.remove('hidden');$$('.bottom-nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));const loaders={myRequests:loadMyRequests,approvals:loadApprovals,approvalHistory:loadApprovalHistory,departmentHistory:loadDepartmentHistory,fleet:loadFleet,reports:loadReports,incidents:loadIncidents,admin:loadAdmin};if(loaders[view])loaders[view]();}
 function fmt(v){if(!v)return '-';const d=new Date(v);return d.toLocaleString('th-TH',{dateStyle:'medium',timeStyle:'short'})}
+function n(v){return Number(v||0).toLocaleString('th-TH')}
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function statusText(s){return ({WAIT_L1:'รอหัวหน้าแผนก',WAIT_L2:'รอผู้ควบคุมรถ',ALLOCATED:'จัดรถแล้ว',PRECHECK_PENDING:'รอตรวจรถก่อนใช้',READY:'พร้อมใช้งาน',IN_USE:'กำลังใช้งาน',RETURN_PENDING:'รอคืนรถ',COMPLETED:'เสร็จสิ้น',REJECTED_L1:'ไม่อนุมัติโดยหัวหน้า',REJECTED_L2:'ไม่อนุมัติโดยผู้ควบคุม',CANCELLED:'ยกเลิก'})[s]||s}
-function badgeClass(s){return s==='COMPLETED'?'success':s?.startsWith('REJECTED')?'danger':['WAIT_L1','WAIT_L2','PRECHECK_PENDING','RETURN_PENDING'].includes(s)?'warn':'info'}
-
-async function api(action,payload={}){
-  const r=await fetch(C.API_BASE,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,idToken:session.idToken,payload})});
-  const data=await r.json(); if(!r.ok||data.ok===false) throw new Error(data.error||'เกิดข้อผิดพลาด'); return data;
-}
-
-async function init(){
-  try{
-    if(!C?.LIFF_ID||C.LIFF_ID==='YOUR_LIFF_ID') throw new Error('กรุณาตั้งค่า LIFF_ID ใน config.js');
-    await liff.init({liffId:C.LIFF_ID});
-    if(!liff.isLoggedIn()){liff.login({redirectUri:location.href});return}
-    session.idToken=liff.getIDToken();
-    const me=await api('auth.me'); session.user=me.user;
-    $('#profileBtn').textContent=(me.user.displayName||'U').slice(0,1);
-    $('#hello').textContent=`สวัสดี ${me.user.displayName||''}`;
-    $('#roleText').textContent=`${me.user.departmentName||'ยังไม่ระบุแผนก'} • ${me.user.role||'USER'}`;
-    $('#approvalMenu').classList.toggle('hidden',!['HEAD','FLEET','ADMIN'].includes(me.user.role));
-    renderStats(me.stats||{}); show('home');
-  }catch(e){$('#loading').innerHTML=`<h3>ไม่สามารถเปิดระบบได้</h3><p class="muted">${e.message}</p>`}
-}
-function renderStats(s){$('#todayStats').innerHTML=[['ทั้งหมด',s.total||0],['พร้อม',s.available||0],['ใช้งาน',s.inUse||0],['ซ่อม',s.maintenance||0]].map(([k,v])=>`<div class="stat"><b>${v}</b><span>${k}</span></div>`).join('')}
-
-async function searchAvailability(startAt,endAt,target='#availabilityResults',selectable=false){
-  if(!startAt||!endAt)return toast('กรุณาระบุวันเวลา');
-  const d=await api('vehicles.availability',{startAt,endAt});
-  const html=d.vehicles.map(v=>`<div class="${selectable?'vehicle-choice':'card item-card'} ${session.selectedVehicleId===v.vehicleId?'selected':''}" data-vehicle="${v.vehicleId}"><div><strong>${v.name}</strong><div class="meta">${v.plate} • ${v.seats||'-'} ที่นั่ง</div></div><span class="badge ${v.available?'success':'danger'}">${v.available?'ว่าง':'ไม่ว่าง'}</span></div>`).join('')||'<div class="card item-card">ไม่พบรถ</div>';
-  $(target).innerHTML=html;
-  if(selectable){$(target).insertAdjacentHTML('beforeend','<div class="vehicle-choice" data-vehicle=""><div><strong>ให้ผู้ควบคุมจัดรถให้</strong><div class="meta">ไม่ระบุรถล่วงหน้า</div></div><span>›</span></div>');$$(target+' [data-vehicle]').forEach(el=>el.onclick=()=>{if(el.querySelector('.danger'))return toast('รถคันนี้ไม่ว่าง');session.selectedVehicleId=el.dataset.vehicle; $$(target+' [data-vehicle]').forEach(x=>x.classList.toggle('selected',x===el));});}
-}
-
-async function loadMyRequests(){
-  try{const d=await api('requests.my');$('#requestList').innerHTML=d.requests.map(r=>`<button class="card item-card" style="text-align:left;width:100%" data-id="${r.requestId}"><div class="item-top"><div><h3>${r.requestId}</h3><div class="meta">${r.destination}<br>${fmt(r.startAt)} – ${fmt(r.endAt)}</div></div><span class="badge ${badgeClass(r.status)}">${statusText(r.status)}</span></div></button>`).join('')||'<div class="card item-card">ยังไม่มีคำขอ</div>';$$('#requestList [data-id]').forEach(x=>x.onclick=()=>loadDetail(x.dataset.id));}catch(e){toast(e.message)}}
-async function loadDetail(id){
-  try{
-    const d=await api('requests.detail',{requestId:id}),r=d.request;
-    const steps=['WAIT_L1','WAIT_L2','PRECHECK_PENDING','READY','IN_USE','COMPLETED'];
-    const current=Math.max(0,steps.indexOf(r.status));
-    let actions='';
-    if(['ALLOCATED','PRECHECK_PENDING'].includes(r.status)){
-      actions=`<button class="btn primary" onclick="openInspection('${id}','BEFORE')">ตรวจสภาพก่อนใช้งาน</button>`;
-    }
-    if(r.status==='READY'){
-      actions=`<button class="btn primary" onclick="startTrip('${id}')">🚙 เริ่มใช้งานรถ</button>`;
-    }
-    if(r.status==='IN_USE'){
-      actions=`<button class="btn secondary" onclick="openInspection('${id}','AFTER')">คืนรถ / บันทึกหลังใช้งาน</button>`;
-    }
-    $('#detailContent').innerHTML=`<div class="card item-card"><div class="item-top"><div><h3>${r.requestId}</h3><div class="meta">${r.destination}</div></div><span class="badge ${badgeClass(r.status)}">${statusText(r.status)}</span></div><div class="divider"></div><div class="kv"><span>ช่วงเวลา</span><b>${fmt(r.startAt)}<br>${fmt(r.endAt)}</b></div><div class="kv"><span>วัตถุประสงค์</span><b>${r.purpose}</b></div><div class="kv"><span>รถ</span><b>${r.assignedVehicleName||r.requestedVehicleName||'รอจัดรถ'}</b></div><div class="timeline">${steps.map((s,i)=>`<div class="timeline-row"><span class="dot ${i<current?'done':i===current?'current':''}"></span><div>${statusText(s)}</div></div>`).join('')}</div>${actions}</div>`;
-    show('requestDetail');
-  }catch(e){toast(e.message)}
-}
-window.startTrip=async(id)=>{
-  if(!confirm('ยืนยันเริ่มใช้งานรถหรือไม่?')) return;
-  try{
-    await api('trip.start',{requestId:id});
-    toast('เริ่มใช้งานรถแล้ว');
-    await loadDetail(id);
-  }catch(e){toast(e.message)}
-};
-
-window.openInspection=(id,type)=>{const f=$('#inspectionForm');f.requestId.value=id;f.inspectionType.value=type;$('#inspectionTitle').textContent=type==='BEFORE'?'ตรวจสภาพก่อนใช้งาน':'บันทึกคืนรถ';show('inspection')}
-
-async function loadApprovals(){
-  try{const d=await api('approvals.pending');$('#approvalList').innerHTML=d.requests.map(r=>`<div class="card item-card"><div class="item-top"><div><h3>${r.requestId}</h3><div class="meta">${r.requesterName} • ${r.departmentName}<br>${r.destination}<br>${fmt(r.startAt)} – ${fmt(r.endAt)}</div></div><span class="badge ${r.priority==='EMERGENCY'?'danger':r.priority==='URGENT'?'warn':'info'}">${r.priority}</span></div><div class="action-row"><button class="btn primary approve" data-id="${r.requestId}">อนุมัติ</button><button class="btn danger reject" data-id="${r.requestId}">ไม่อนุมัติ</button></div></div>`).join('')||'<div class="card item-card">ไม่มีรายการรออนุมัติ</div>';$$('.approve').forEach(b=>b.onclick=()=>decision(b.dataset.id,'APPROVE'));$$('.reject').forEach(b=>b.onclick=()=>decision(b.dataset.id,'REJECT'));}catch(e){toast(e.message)}}
-async function decision(id,decision){try{if(decision==='REJECT'&&!confirm('ยืนยันไม่อนุมัติคำขอนี้?'))return;await api('approvals.decide',{requestId:id,decision});toast('บันทึกแล้ว');loadApprovals()}catch(e){toast(e.message)}}
-async function loadFleet(){try{const d=await api('vehicles.list');$('#fleetList').innerHTML=d.vehicles.map(v=>`<div class="card item-card"><div class="item-top"><div><h3>${v.name}</h3><div class="meta">${v.plate} • ${v.seats||'-'} ที่นั่ง</div></div><span class="badge ${v.status==='ACTIVE'?'success':'warn'}">${v.status}</span></div></div>`).join('')}catch(e){toast(e.message)}}
-
-$$('[data-view]').forEach(b=>b.addEventListener('click',()=>show(b.dataset.view)));
-$$('.back').forEach(b=>b.addEventListener('click',()=>show(b.dataset.back||'home')));
-$('#checkAvailBtn').onclick=()=>{const f=new FormData($('#requestForm'));searchAvailability(f.get('startAt'),f.get('endAt'),'#vehicleChoices',true)};
-$('#availSearch').onclick=()=>searchAvailability($('#availStart').value,$('#availEnd').value);
-$('#requestForm').onsubmit=async e=>{e.preventDefault();try{const f=Object.fromEntries(new FormData(e.target));f.requestedVehicleId=session.selectedVehicleId;const d=await api('requests.create',f);toast(`ส่งคำขอ ${d.requestId} แล้ว`);e.target.reset();session.selectedVehicleId='';show('myRequests')}catch(err){toast(err.message)}};
-
+function badgeClass(s){return s==='COMPLETED'?'success':String(s).startsWith('REJECTED')||s==='CANCELLED'?'danger':['WAIT_L1','WAIT_L2','PRECHECK_PENDING','RETURN_PENDING'].includes(s)?'warn':'info'}
+async function api(action,payload={}){const r=await fetch(C.API_BASE,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,idToken:session.idToken,payload})});let data;try{data=await r.json()}catch{throw new Error('API ตอบกลับไม่ถูกต้อง')}if(!r.ok||data.ok===false)throw new Error(data.error||'เกิดข้อผิดพลาด');return data}
+async function init(){try{if(!C?.LIFF_ID||C.LIFF_ID==='YOUR_LIFF_ID')throw new Error('กรุณาตั้งค่า LIFF_ID ใน config.js');await liff.init({liffId:C.LIFF_ID});if(!liff.isLoggedIn()){liff.login({redirectUri:location.href});return}session.idToken=liff.getIDToken();const me=await api('auth.me');session.user=me.user;$('#profileBtn').textContent=(me.user.displayName||'U').slice(0,1);$('#hello').textContent=`สวัสดี ${me.user.displayName||''}`;$('#roleText').textContent=`${me.user.departmentName||'ยังไม่ระบุแผนก'} • ${me.user.role||'USER'}`;renderMenus();renderStats(me.stats||{});await renderAttention();api('richmenu.sync').catch(()=>{});show('home')}catch(e){$('#loading').innerHTML=`<h3>ไม่สามารถเปิดระบบได้</h3><p class="muted">${esc(e.message)}</p>`}}
+function renderMenus(){const role=session.user?.role||'USER';const menus=[['request','＋','ขอใช้รถ','ส่งคำขอใหม่','primary'],['availability','🔎','เช็กรถว่าง','ค้นหาตามช่วงเวลา',''],['myRequests','📋','คำขอของฉัน','ติดตามสถานะ','']];if(['HEAD','FLEET','ADMIN'].includes(role))menus.push(['approvals','✅','รออนุมัติ','งานที่ต้องดำเนินการ',''],['approvalHistory','🕘','ประวัติอนุมัติ','รายการที่ผ่านมา',''],['departmentHistory','🏢','ประวัติหน่วย','คำขอในหน่วยงาน','']);if(['FLEET','ADMIN','HEAD'].includes(role))menus.push(['reports','📊','รายงาน','สัปดาห์ / เดือน / ปี','']);if(['FLEET','ADMIN'].includes(role))menus.push(['fleet','🚙','สถานะรถ','ว่าง / จอง / ใช้งาน',''],['reassign','🔄','เปลี่ยนรถ','โยกรถกรณีเร่งด่วน',''],['incidents','⚠️','เหตุผิดปกติ','ติดตามและปิดเหตุ','']);if(role==='ADMIN')menus.push(['admin','⚙️','จัดการระบบ','ผู้ใช้ รถ แผนก','']);$('#homeMenus').innerHTML=menus.map(m=>`<button class="menu-card ${m[4]}" data-view="${m[0]}"><span class="menu-icon">${m[1]}</span><strong>${m[2]}</strong><small>${m[3]}</small></button>`).join('');$('#homeMenus').querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>show(b.dataset.view))}
+function renderStats(s){$('#todayStats').innerHTML=[['รถทั้งหมด',s.total||0],['พร้อม',s.available||0],['ใช้งาน',s.inUse||0],['ซ่อม',s.maintenance||0]].map(([k,v])=>`<div class="stat"><b>${v}</b><span>${k}</span></div>`).join('')}
+async function renderAttention(){try{const d=await api('dashboard.summary'),s=d.summary;const list=[];if(s.myOpen)list.push(`คำขอของฉันที่ยังไม่จบ ${s.myOpen} รายการ`);if(s.pendingApprovals)list.push(`รอคุณอนุมัติ ${s.pendingApprovals} รายการ`);if(s.incidentsOpen&&['FLEET','ADMIN'].includes(session.user.role))list.push(`เหตุผิดปกติที่ยังไม่ปิด ${s.incidentsOpen} รายการ`);$('#attentionList').innerHTML=list.length?list.map(x=>`<div class="mini-row">${x}</div>`).join(''):'<div class="muted">ไม่มีรายการเร่งด่วน</div>'}catch(e){}}
+async function searchAvailability(startAt,endAt,target='#availabilityResults',selectable=false){if(!startAt||!endAt)return toast('กรุณาระบุวันเวลา');busy(true,'กำลังตรวจสอบรถว่าง...');try{const d=await api('vehicles.availability',{startAt,endAt});const html=d.vehicles.map(v=>`<div class="${selectable?'vehicle-choice':'card item-card'} ${session.selectedVehicleId===v.vehicleId?'selected':''}" data-vehicle="${v.vehicleId}"><div><strong>${esc(v.name)}</strong><div class="meta">${esc(v.plate)} • ${v.seats||'-'} ที่นั่ง</div></div><span class="badge ${v.available?'success':'danger'}">${v.available?'ว่าง':'ไม่ว่าง'}</span></div>`).join('')||'<div class="card item-card">ไม่พบรถ</div>';$(target).innerHTML=html;if(selectable){$(target).insertAdjacentHTML('beforeend','<div class="vehicle-choice" data-vehicle=""><div><strong>ให้ผู้ควบคุมจัดรถให้</strong><div class="meta">ไม่ระบุรถล่วงหน้า</div></div><span>›</span></div>');$$(target+' [data-vehicle]').forEach(el=>el.onclick=()=>{if(el.querySelector('.danger'))return toast('รถคันนี้ไม่ว่าง');session.selectedVehicleId=el.dataset.vehicle;$$(target+' [data-vehicle]').forEach(x=>x.classList.toggle('selected',x===el));});}}catch(e){toast(e.message)}finally{busy(false)}}
+async function loadMyRequests(){try{const d=await api('requests.my');$('#requestList').innerHTML=requestCards(d.requests,'ยังไม่มีคำขอ');$$('#requestList [data-id]').forEach(x=>x.onclick=()=>loadDetail(x.dataset.id))}catch(e){toast(e.message)}}
+function requestCards(list,empty){return list.map(r=>`<button class="card item-card request-card" data-id="${r.requestId}"><div class="item-top"><div><h3>${r.requestId}</h3><div class="meta">${esc(r.destination)}<br>${fmt(r.startAt)} – ${fmt(r.endAt)}<br>${esc(r.assignedVehicleName||r.requestedVehicleName||'รอจัดรถ')}</div></div><span class="badge ${badgeClass(r.status)}">${statusText(r.status)}</span></div></button>`).join('')||`<div class="card item-card">${empty}</div>`}
+async function loadDetail(id){try{const d=await api('requests.detail',{requestId:id}),r=d.request;const steps=['WAIT_L1','WAIT_L2','PRECHECK_PENDING','READY','IN_USE','COMPLETED'];const current=Math.max(0,steps.indexOf(r.status));let actions='';if(['ALLOCATED','PRECHECK_PENDING'].includes(r.status))actions+=`<button class="btn primary" onclick="openInspection('${id}','BEFORE')">ตรวจสภาพก่อนใช้งาน</button>`;if(r.status==='READY')actions+=`<button class="btn primary" onclick="startTrip('${id}')">🚙 เริ่มใช้งานรถ</button>`;if(r.status==='IN_USE')actions+=`<button class="btn secondary" onclick="openInspection('${id}','AFTER')">คืนรถ / บันทึกหลังใช้งาน</button>`;if(['WAIT_L1','WAIT_L2','PRECHECK_PENDING','READY'].includes(r.status))actions+=`<button class="btn ghost" onclick="cancelRequest('${id}')">ยกเลิกคำขอ</button>`;const inspect=d.inspections||[];const pre=inspect.find(x=>x.type==='BEFORE'),post=inspect.find(x=>x.type==='AFTER');$('#detailContent').innerHTML=`<div class="card item-card"><div class="item-top"><div><h3>${r.requestId}</h3><div class="meta">${esc(r.destination)}</div></div><span class="badge ${badgeClass(r.status)}">${statusText(r.status)}</span></div><div class="divider"></div><div class="kv"><span>ช่วงเวลา</span><b>${fmt(r.startAt)}<br>${fmt(r.endAt)}</b></div><div class="kv"><span>วัตถุประสงค์</span><b>${esc(r.purpose)}</b></div><div class="kv"><span>รถ</span><b>${esc(r.assignedVehicleName||r.requestedVehicleName||'รอจัดรถ')}</b></div>${r.startedAt?`<div class="kv"><span>ออกจริง</span><b>${fmt(r.startedAt)}</b></div>`:''}${r.returnedAt?`<div class="kv"><span>คืนจริง</span><b>${fmt(r.returnedAt)}</b></div>`:''}${r.distanceKm!==''&&r.distanceKm!=null?`<div class="kv"><span>ระยะทาง</span><b>${n(r.distanceKm)} กม.</b></div>`:''}${pre?`<div class="kv"><span>ไมล์ก่อน</span><b>${n(pre.odometer)}</b></div>`:''}${post?`<div class="kv"><span>ไมล์หลัง</span><b>${n(post.odometer)}</b></div>`:''}<div class="timeline">${steps.map((s,i)=>`<div class="timeline-row"><span class="dot ${i<current?'done':i===current?'current':''}"></span><div>${statusText(s)}</div></div>`).join('')}</div>${actions}</div>`;show('requestDetail')}catch(e){toast(e.message)}}
+window.startTrip=async id=>{if(!confirm('ยืนยันเริ่มใช้งานรถหรือไม่?'))return;busy(true,'กำลังบันทึกเวลาออก...');try{await api('trip.start',{requestId:id});alert('✅ เริ่มใช้งานรถเรียบร้อย');await loadDetail(id)}catch(e){alert('ไม่สำเร็จ: '+e.message)}finally{busy(false)}};
+window.cancelRequest=async id=>{const reason=prompt('เหตุผลการยกเลิก');if(reason===null)return;try{await api('requests.cancel',{requestId:id,reason});toast('ยกเลิกคำขอแล้ว');loadMyRequests();show('myRequests')}catch(e){toast(e.message)}};
+window.openInspection=(id,type)=>{const f=$('#inspectionForm');f.reset();f.requestId.value=id;f.inspectionType.value=type;$('#inspectionTitle').textContent=type==='BEFORE'?'ตรวจสภาพก่อนใช้งาน':'บันทึกคืนรถ';$('#incidentFields').classList.add('hidden');show('inspection')};
+async function loadApprovals(){try{const d=await api('approvals.pending');$('#approvalList').innerHTML=d.requests.map(r=>`<div class="card item-card"><div class="item-top"><div><h3>${r.requestId}</h3><div class="meta">${esc(r.requesterName)} • ${esc(r.departmentName)}<br>${esc(r.destination)}<br>${fmt(r.startAt)} – ${fmt(r.endAt)}<br>${esc(r.requestedVehicleName||'ให้ผู้ควบคุมจัดรถ')}</div></div><span class="badge ${r.priority==='EMERGENCY'?'danger':r.priority==='URGENT'?'warn':'info'}">${r.priority}</span></div><div class="action-row"><button class="btn primary approve" data-id="${r.requestId}">อนุมัติ</button><button class="btn danger reject" data-id="${r.requestId}">ไม่อนุมัติ</button></div></div>`).join('')||'<div class="card item-card">ไม่มีรายการรออนุมัติ</div>';$$('.approve').forEach(b=>b.onclick=()=>decision(b.dataset.id,'APPROVE'));$$('.reject').forEach(b=>b.onclick=()=>decision(b.dataset.id,'REJECT'))}catch(e){toast(e.message)}}
+async function decision(id,decision){try{let comment='';if(decision==='REJECT'){comment=prompt('ระบุเหตุผลที่ไม่อนุมัติ')||'';if(!comment)return}busy(true,'กำลังบันทึกผลอนุมัติ...');await api('approvals.decide',{requestId:id,decision,comment});toast('บันทึกผลแล้ว');loadApprovals()}catch(e){alert(e.message)}finally{busy(false)}}
+async function loadApprovalHistory(){try{const d=await api('approvals.history',{mineOnly:false});$('#approvalHistoryList').innerHTML=d.approvals.map(a=>`<div class="card item-card"><div class="item-top"><div><h3>${a.requestId}</h3><div class="meta">${esc(a.request?.destination||'')}<br>${fmt(a.decidedAt)} • ชั้น ${a.level}</div></div><span class="badge ${a.decision==='APPROVED'?'success':'danger'}">${a.decision}</span></div>${a.comment?`<div class="note-box">${esc(a.comment)}</div>`:''}</div>`).join('')||'<div class="card item-card">ยังไม่มีประวัติ</div>'}catch(e){toast(e.message)}}
+async function loadDepartmentHistory(){try{const d=await api('requests.department',{});$('#departmentRequestList').innerHTML=requestCards(d.requests,'ยังไม่มีประวัติ');$$('#departmentRequestList [data-id]').forEach(x=>x.onclick=()=>loadDetail(x.dataset.id))}catch(e){toast(e.message)}}
+async function loadFleet(){try{const d=await api('vehicles.list');const labels={AVAILABLE:'ว่าง',RESERVED:'จอง',IN_USE:'กำลังใช้',MAINTENANCE:'ซ่อม',OUT_OF_SERVICE:'งดใช้'};$('#fleetList').innerHTML=d.vehicles.map(v=>`<div class="card item-card"><div class="item-top"><div><h3>${esc(v.name)}</h3><div class="meta">${esc(v.plate)} • ${v.seats||'-'} ที่นั่ง</div></div><span class="badge ${v.liveStatus==='AVAILABLE'?'success':v.liveStatus==='IN_USE'?'info':'warn'}">${labels[v.liveStatus]||v.liveStatus}</span></div></div>`).join('');const sel=$('#reassignVehicle');sel.innerHTML='<option value="">เลือกรถ</option>'+d.vehicles.filter(v=>v.status==='ACTIVE').map(v=>`<option value="${v.vehicleId}">${esc(v.name)} ${esc(v.plate)}</option>`).join('')}catch(e){toast(e.message)}}
+async function loadReports(){try{const d=await api('reports.summary',{period:session.reportPeriod}),s=d.summary;$('#reportKpis').innerHTML=[['ภารกิจ',s.total],['เสร็จสิ้น',s.completed],['ระยะทาง',`${n(s.distanceKm)} กม.`],['เหตุผิดปกติ',s.incidents],['ยกเลิก',s.cancelled],['ไม่อนุมัติ',s.rejected]].map(x=>`<div class="card report-kpi"><span>${x[0]}</span><b>${x[1]}</b></div>`).join('');$('#reportDepartments').innerHTML=(d.byDepartment||[]).map(x=>`<div class="mini-row"><span>${esc(x.departmentName||x.departmentId)}</span><b>${x.trips} เที่ยว</b></div>`).join('')||'<div class="muted">ไม่มีข้อมูล</div>'}catch(e){toast(e.message)}}
+async function shareReport(){try{if(!liff.isApiAvailable('shareTargetPicker'))throw new Error('LINE เวอร์ชันนี้ไม่รองรับ Share Target Picker');const d=await api('reports.flex',{period:session.reportPeriod});const result=await liff.shareTargetPicker([d.flex]);if(result)toast('แชร์รายงานแล้ว')}catch(e){toast(e.message,4000)}}
+async function loadIncidents(){try{const d=await api('incidents.list',{});$('#incidentList').innerHTML=d.incidents.map(i=>`<div class="card item-card"><div class="item-top"><div><h3>${i.incidentId}</h3><div class="meta">${i.requestId} • ${esc(i.category)} • ${esc(i.severity)}<br>${esc(i.detail||'')}</div></div><span class="badge ${i.status==='RESOLVED'?'success':'danger'}">${i.status}</span></div>${i.status!=='RESOLVED'&&['FLEET','ADMIN'].includes(session.user.role)?`<button class="btn secondary resolve-incident" data-id="${i.incidentId}">ปิดเหตุการณ์</button>`:''}</div>`).join('')||'<div class="card item-card">ไม่มีเหตุการณ์</div>';$$('.resolve-incident').forEach(b=>b.onclick=()=>resolveIncident(b.dataset.id))}catch(e){toast(e.message)}}
+async function resolveIncident(id){const note=prompt('ผลการดำเนินการ/การแก้ไข');if(note===null)return;try{await api('incidents.resolve',{incidentId:id,resolutionNote:note});toast('ปิดเหตุการณ์แล้ว');loadIncidents()}catch(e){toast(e.message)}}
+async function loadAdmin(){try{const d=await api('admin.bootstrap');$('#adminUsers').innerHTML=d.users.map(u=>`<div class="mini-row admin-user"><div><b>${esc(u.displayName)}</b><small>${esc(u.departmentId||'-')} • ${esc(u.role)}</small></div><button data-line="${u.lineUserId}" data-role="${u.role}" class="small-btn edit-user">แก้ Role</button></div>`).join('');$$('.edit-user').forEach(b=>b.onclick=()=>editUserRole(b.dataset.line,b.dataset.role))}catch(e){toast(e.message)}}
+async function editUserRole(line,current){const role=prompt('Role: USER / HEAD / FLEET / ADMIN',current);if(!role)return;try{await api('admin.user.update',{lineUserId:line,role:role.toUpperCase()});toast('อัปเดต Role แล้ว');loadAdmin()}catch(e){toast(e.message)}}
+$$('[data-view]').forEach(b=>b.addEventListener('click',()=>show(b.dataset.view)));$$('.back').forEach(b=>b.addEventListener('click',()=>show(b.dataset.back||'home')));
+$('#checkAvailBtn').onclick=()=>{const f=new FormData($('#requestForm'));searchAvailability(f.get('startAt'),f.get('endAt'),'#vehicleChoices',true)};$('#availSearch').onclick=()=>searchAvailability($('#availStart').value,$('#availEnd').value);
+$('#requestForm').onsubmit=async e=>{e.preventDefault();busy(true,'กำลังส่งคำขอ...');try{const f=Object.fromEntries(new FormData(e.target));f.requestedVehicleId=session.selectedVehicleId;const d=await api('requests.create',f);alert(`✅ ส่งคำขอ ${d.requestId} แล้ว`);e.target.reset();session.selectedVehicleId='';show('myRequests')}catch(err){alert('ส่งคำขอไม่สำเร็จ: '+err.message)}finally{busy(false)}};
 async function fileToDataUrl(file){return await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file)})}
-$('#inspectionForm').onsubmit=async e=>{
-  e.preventDefault();
-  const form=e.target;
-  const btn=form.querySelector('button[type="submit"]');
-  const oldText=btn?btn.textContent:'';
-  try{
-    if(btn){btn.disabled=true;btn.textContent='กำลังบันทึก...';}
-    const fd=new FormData(form);
-    const p={requestId:fd.get('requestId'),inspectionType:fd.get('inspectionType'),odometer:Number(fd.get('odometer')),fuelLevel:fd.get('fuelLevel'),hasIncident:!!fd.get('hasIncident'),note:fd.get('note')||'',files:{}};
-    for(const k of ['odometerPhoto','vehiclePhoto','incidentPhoto']){
-      const file=fd.get(k);
-      if(file&&file.size)p.files[k]={name:file.name,type:file.type,dataUrl:await fileToDataUrl(file)};
-    }
-    const d=await api('trip.inspection',p);
-    alert(d.status==='READY'?'✅ บันทึกตรวจสภาพก่อนใช้งานเรียบร้อย รถพร้อมใช้งาน':'✅ บันทึกการคืนรถเรียบร้อย');
-    form.reset();
-    show('myRequests');
-  }catch(err){
-    alert('บันทึกไม่สำเร็จ: '+err.message);
-  }finally{
-    if(btn){btn.disabled=false;btn.textContent=oldText;}
-  }
-};
+$('#hasIncident').onchange=e=>$('#incidentFields').classList.toggle('hidden',!e.target.checked);
+$('#inspectionForm').onsubmit=async e=>{e.preventDefault();const form=e.target,btn=form.querySelector('button[type="submit"]'),old=btn.textContent;try{btn.disabled=true;btn.textContent='กำลังอัปโหลดรูป...';busy(true,'กำลังบันทึกภาพและข้อมูล...');const fd=new FormData(form);const p={requestId:fd.get('requestId'),inspectionType:fd.get('inspectionType'),odometer:Number(fd.get('odometer')),fuelLevel:fd.get('fuelLevel'),hasIncident:!!fd.get('hasIncident'),incidentCategory:fd.get('incidentCategory'),incidentSeverity:fd.get('incidentSeverity'),incidentDetail:fd.get('incidentDetail')||'',note:fd.get('note')||'',files:{}};for(const k of ['odometerPhoto','vehiclePhoto','incidentPhoto']){const file=fd.get(k);if(file&&file.size)p.files[k]={name:file.name,type:file.type,dataUrl:await fileToDataUrl(file)}}const d=await api('trip.inspection',p);alert(d.status==='READY'?'✅ บันทึกตรวจสภาพก่อนใช้งานเรียบร้อย\nรถพร้อมใช้งาน':`✅ คืนรถเรียบร้อย\nระยะทาง ${n(d.distanceKm)} กม.`);form.reset();show('myRequests')}catch(err){alert('บันทึกไม่สำเร็จ: '+err.message)}finally{busy(false);btn.disabled=false;btn.textContent=old}};
+$('#reassignForm').onsubmit=async e=>{e.preventDefault();const p=Object.fromEntries(new FormData(e.target));try{busy(true,'กำลังเปลี่ยนรถ...');await api('allocation.reassign',p);alert('✅ เปลี่ยนรถเรียบร้อย');e.target.reset();show('fleet')}catch(err){alert(err.message)}finally{busy(false)}};
+$$('.segmented [data-period]').forEach(b=>b.onclick=()=>{$$('.segmented [data-period]').forEach(x=>x.classList.remove('active'));b.classList.add('active');session.reportPeriod=b.dataset.period;loadReports()});$('#shareReportBtn').onclick=shareReport;
+$('#vehicleAdminForm').onsubmit=async e=>{e.preventDefault();try{await api('admin.vehicle.save',Object.fromEntries(new FormData(e.target)));toast('บันทึกรถแล้ว');e.target.reset()}catch(err){toast(err.message)}};
+$('#deptAdminForm').onsubmit=async e=>{e.preventDefault();try{await api('admin.department.save',Object.fromEntries(new FormData(e.target)));toast('บันทึกแผนกแล้ว');e.target.reset()}catch(err){toast(err.message)}};
 init();
